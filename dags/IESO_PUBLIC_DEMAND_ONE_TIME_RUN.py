@@ -1,7 +1,7 @@
 # Import the necessary libraries from Airflow
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.decorators import dag, task
+from airflow.sdk import dag, task
 from airflow.models import Variable
 from datetime import datetime, timedelta
 import requests
@@ -15,18 +15,17 @@ from typing import Any
 
 @dag (
     dag_id = 'ieso_demand_pipeline_one_time',
-    schedule = None,
+    # schedule = "@once",
     start_date = datetime(2020, 1, 1),
     catchup = False,
     tags = ['demand', 'data-pipeline', 'ieso', 'postgres']
 )
-
 def ieso_demand_data_pipeline():
     # Set up a logger for this specific task
     logger = logging.getLogger("airflow.task")
 
     @task
-    def postgres_connection() -> Any:
+    def postgres_connection() -> str:
         # Access database credentials from Airflow Variables
         try:
             DB_USER = Variable.get('DB_USER')
@@ -36,6 +35,7 @@ def ieso_demand_data_pipeline():
             DB_NAME = Variable.get('DB')
 
             logger.info("Database credentials loaded from Airflow Variables.")
+
         except Exception as e:
             logger.error(f"Error accessing Airflow Variables: {e}. Cannot proceed with DB write.")
             # Raise an exception to fail the task if variables are not set
@@ -43,15 +43,10 @@ def ieso_demand_data_pipeline():
 
         # Construct the database connection string
         DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        try:
-            logger.info("Attempting to connect to the PostgreSQL database...")
-            engine = create_engine(DATABASE_URL)
-            logger.info("Database connection established.")
-            return engine
+        logger.info("Database URL created successfully.")
 
-        except Exception as e:
-            logger.error(f"Error establishing connection to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
+        return DATABASE_URL
+
 
 
     @task
@@ -116,7 +111,16 @@ def ieso_demand_data_pipeline():
 
 
     @task
-    def create_00_ref(df:DataFrame, engine,  table_name = '00_IESO_DEMAND', db_schema = 'public'):
+    def create_00_ref(df:DataFrame, db_url,  table_name = '00_IESO_DEMAND', db_schema = '00_RAW'):
+
+        try:
+            logger.info("Attempting to connect to the PostgreSQL database...")
+            engine = create_engine(db_url)
+            logger.info("Database connection established.")
+
+        except Exception as e:
+            logger.error(f"Error establishing connection to PostgreSQL database: {e}")
+            raise e  # Re-raise the exception to fail the task
 
         try:
             with engine.connect() as conn:
@@ -137,10 +141,10 @@ def ieso_demand_data_pipeline():
             raise e  # Re-raise the exception to fail the task
 
 
-        engine = postgres_connection()
-        file_name = ieso_demand_data_pull()
-        df = transform_data(file_name)
-        create_00_ref(df, engine, table_name = '00_IESO_DEMAND', db_schema = '00_RAW')
+    url = postgres_connection()
+    file_name = ieso_demand_data_pull()
+    df = transform_data(file_name)
+    create_00_ref(df, url)
 
 
 ieso_demand_data_pipeline()
