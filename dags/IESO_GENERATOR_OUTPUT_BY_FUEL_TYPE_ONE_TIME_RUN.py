@@ -8,6 +8,8 @@ import os
 import pandas as pd
 from sqlalchemy import create_engine
 import logging
+from lxml import etree
+from io import BytesIO
 
 # Define the default arguments for the DAG. These will be inherited by all tasks.
 default_args = {
@@ -50,22 +52,26 @@ def output_generation_by_fuel_type_pipeline():
     DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
     # Define file and table names
-    base_url = 'https://reports-public.ieso.ca/public/DemandZonal/'
-    filename = 'PUB_DemandZonal.csv'
+    base_url = 'https://reports-public.ieso.ca/public/GenOutputbyFuelHourly/'
+    filename = 'PUB_GenOutputbyFuelHourly.xml '
     url = f"{base_url}{filename}"
     local_filename = filename
-    table_name = 'IESO_ZONAL_DEMAND'  # Name of the table to write to in PostgreSQL
+    table_name = '00_GEN_OUTPUT_BY_FUEL_TYPE_HOURLY'  # Name of the table to write to in PostgreSQL
 
     # --- 1. Download the file ---
     try:
-        logger.info(f"Attempting to download {url}...")
-        response = requests.get(url, stream=True)
+        response = requests.get(url)
         response.raise_for_status()
 
-        with open(local_filename, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+        # Parse XML
+        tree = etree.parse(BytesIO(response.content))
+        root = tree.getroot()
+
+        # Extract namespace (if any)
+        nsmap = root.nsmap
+        # Some XML files use a default namespace (None key in nsmap), remap it to "ns"
+        if None in nsmap:
+            nsmap["ns"] = nsmap.pop(None)
 
         logger.info(f"Successfully downloaded {local_filename}")
 
@@ -73,58 +79,38 @@ def output_generation_by_fuel_type_pipeline():
         logger.error(f"Error downloading the file: {e}")
         raise e  # Re-raise the exception to fail the task
 
-    # --- 2. Process the downloaded CSV into a pandas DataFrame ---
+    # --- 2. Process the downloaded XML into a pandas DataFrame ---
     try:
-        if os.path.exists(local_filename):
-            col_names = [
-            'Date',
-            'Hour',
-            'Ontario_Demand',
-            'Northwest',
-            'Northeast',
-            'Ottawa',
-            'East',
-            'Toronto',
-            'Essa',
-            'Bruce',
-            'Southwest',
-            'Niagara',
-            'West',
-            'Zone_Total',
-            'Diff'
-            ]
+        records = []
 
-            df = pd.read_csv(local_filename, header=None, names=col_names)
+        # Loop over each day
+        for daily in root.xpath(".//ns:DailyData", namespaces=nsmap):
+            date = daily.findtext("ns:Day", namespaces=nsmap)
 
-            # Data cleaning and type conversion
-            df['Date'] = pd.to_datetime(df['Date'], errors='coerce', format='%Y-%m-%d')
-            df.dropna(subset=['Date'], inplace=True)
-            df['Modified_DT'] = pd.Timestamp.now().floor('S')
-            #set dtype of other columns
-            df['Hour'] = pd.to_numeric(df['Hour'], errors='coerce')
-            df['Ontario_Demand'] = pd.to_numeric(df['Ontario_Demand'], errors='coerce')
-            df['Northwest'] = pd.to_numeric(df['Northwest'], errors='coerce')
-            df['Northeast'] = pd.to_numeric(df['Northeast'], errors='coerce')
-            df['Ottawa'] = pd.to_numeric(df['Ottawa'], errors='coerce')
-            df['East'] = pd.to_numeric(df['East'], errors='coerce')
-            df['Toronto'] = pd.to_numeric(df['Toronto'], errors='coerce')
-            df['Essa'] = pd.to_numeric(df['Essa'], errors='coerce')
-            df['Bruce'] = pd.to_numeric(df['Bruce'], errors='coerce')
-            df['Southwest'] = pd.to_numeric(df['Southwest'], errors='coerce')
-            df['Niagara'] = pd.to_numeric(df['Niagara'], errors='coerce')
-            df['West'] = pd.to_numeric(df['West'], errors='coerce')
-            df['Zone_Total'] = pd.to_numeric(df['Zone_Total'], errors='coerce')
-            df['Diff'] = pd.to_numeric(df['Diff'], errors='coerce')
+            # Loop over each hour
+            for hourly in daily.xpath("./ns:HourlyData", namespaces=nsmap):
+                hour = hourly.findtext("ns:Hour", namespaces=nsmap)
 
-            logger.info("\nFirst 5 rows of the processed data:")
-            logger.info(df.head())
+                # Loop over each fuel type
+                for fuel_total in hourly.xpath("./ns:FuelTotal", namespaces=nsmap):
+                    fuel_type = fuel_total.findtext("ns:Fuel", namespaces=nsmap)
+                    output = fuel_total.findtext("./ns:EnergyValue/ns:Output", namespaces=nsmap)
 
-        else:
-            logger.error(f"File {local_filename} was not found, cannot read.")
-            raise FileNotFoundError(f"File {local_filename} was not found after download.")
+                    records.append({
+                        "date": date,
+                        "hour": int(hour),
+                        "fuel_type": fuel_type,
+                        "output": output if output == None else int(output)
+                    })
+
+        # Create DataFrame
+        df = pd.DataFrame(records)
+
+        logger.info("\nFirst 5 rows of the processed data:")
+        logger.info(df.head())
 
     except Exception as e:
-        logger.error(f"Error reading and processing the CSV file: {e}")
+        logger.error(f"Error reading and processing the XML file: {e}")
         raise e  # Re-raise the exception to fail the task
 
     # --- 3. Write the DataFrame to PostgreSQL ---
@@ -152,13 +138,13 @@ def output_generation_by_fuel_type_pipeline():
 
 # Instantiate the DAG object.
 with DAG(
-        dag_id='ieso_zonal_demand_pipeline_one_time',
+        dag_id='ieso_output_by_fuel_hourly_one_time',
         start_date=datetime(2023, 1, 1),
         catchup=False,
-        tags=['data-pipeline', 'ieso', 'postgres', 'zonal']
+        tags=['data-pipeline', 'ieso', 'postgres', 'output', 'fuel-type']
 ) as dag:
     # Define a single task to run the entire pipeline
     run_pipeline_task = PythonOperator(
-        task_id='run_ieso_zonal_demand_pipeline',
-        python_callable=zonal_demand_data_pipeline,
+        task_id='run_ieso_output_by_fuel_hourly_pipeline',
+        python_callable=output_generation_by_fuel_type_pipeline,
     )
