@@ -53,7 +53,7 @@ def output_generation_by_fuel_type_pipeline():
 
     # Define file and table names
     base_url = 'https://reports-public.ieso.ca/public/GenOutputbyFuelHourly/'
-    filename = 'PUB_GenOutputbyFuelHourly.xml '
+    filename = 'PUB_GenOutputbyFuelHourly.xml'
     url = f"{base_url}{filename}"
     local_filename = filename
     table_name = '00_GEN_OUTPUT_BY_FUEL_TYPE_HOURLY'  # Name of the table to write to in PostgreSQL
