@@ -54,7 +54,7 @@ def demand_data_pipeline():
     filename = 'PUB_Demand.csv'
     url = f"{base_url}{filename}"
     local_filename = filename
-    table_name = 'IESO_DEMAND'  # Name of the table to write to in PostgreSQL
+    table_name = '00_IESO_DEMAND'  # Name of the table to write to in PostgreSQL
 
     # --- 1. Download the file ---
     try:
