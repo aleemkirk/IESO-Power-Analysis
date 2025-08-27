@@ -12,7 +12,7 @@ from lxml import etree
 from pandas.core.interchange.dataframe_protocol import DataFrame
 
 @dag (
-    dag_id = 'ieso_output_by_fuel_hourly_one_time',
+    dag_id = 'create_ieso_output_by_fuel_hourly_one_time',
     schedule = "@once",
     start_date = datetime(2020, 1, 1),
     catchup = False,
