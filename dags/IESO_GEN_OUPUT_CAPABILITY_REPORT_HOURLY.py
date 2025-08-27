@@ -141,7 +141,7 @@ def ouput_capability_report_pipeline():
             raise e  # Re-raise the exception to fail the task
 
     @task
-    def create_00_ref(df: DataFrame, db_url, table_name='00_GEN_OUTPUT_CAPABILITY_HOURLY', db_schema='00_RAW'):
+    def update_00_ref(df: DataFrame, db_url, table_name='00_GEN_OUTPUT_CAPABILITY_HOURLY', db_schema='00_RAW'):
 
         try:
             logger.info("Attempting to connect to the PostgreSQL database...")
@@ -173,6 +173,6 @@ def ouput_capability_report_pipeline():
     url = postgres_connection()
     file_name = ieso_data_pull()
     df = transform_data(file_name)
-    create_00_ref(df, url)
+    update_00_ref(df, url)
 
 ouput_capability_report_pipeline()
