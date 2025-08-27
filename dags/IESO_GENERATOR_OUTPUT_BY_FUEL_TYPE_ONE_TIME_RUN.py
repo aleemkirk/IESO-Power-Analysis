@@ -9,7 +9,6 @@ import pandas as pd
 from sqlalchemy import create_engine
 import logging
 from lxml import etree
-from io import BytesIO
 from pandas.core.interchange.dataframe_protocol import DataFrame
 
 @dag (
@@ -76,7 +75,6 @@ def output_generation_by_fuel_type_pipeline():
         try:
             # Parse XML
             tree = etree.parse(local_filename)
-            # tree = etree.parse(BytesIO(response.content))
             root = tree.getroot()
 
             # Extract namespace (if any)
