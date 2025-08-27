@@ -206,8 +206,8 @@ def output_capability_report_pipeline():
                     update(table)
                     .where( (table.c.TABLE_NAME == table_name) &
                             (table.c.TABLE_SCHEMA == db_schema))  # optional filter if needed
-                    .values(MODIFIED_DT=update_dt,
-                    MODIFIED_TIME = update_time )# set columns
+                    .values(CREATED_DT=update_dt,
+                    CREATED_TIME = update_time )# set columns
 
                 )
                 result = conn.execute(stmt)
