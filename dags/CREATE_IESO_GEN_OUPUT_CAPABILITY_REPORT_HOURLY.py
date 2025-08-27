@@ -6,7 +6,7 @@ from airflow.sdk import dag, task
 from datetime import datetime, timedelta
 import requests
 import pandas as pd
-from sqlalchemy import create_engine, MetaData, Table, update, and_
+from sqlalchemy import create_engine, MetaData, Table, update
 import logging
 from lxml import etree
 from pandas.core.interchange.dataframe_protocol import DataFrame
