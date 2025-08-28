@@ -107,7 +107,7 @@ def output_generation_by_fuel_type_pipeline():
                         output = fuel_total.findtext("./ns:EnergyValue/ns:Output", namespaces=nsmap)
 
                         records.append({
-                            "date": date,
+                            "Date": pd.to_datetime(date),
                             "hour": int(hour),
                             "fuel_type": fuel_type,
                             "output": output if output == None else int(output)
