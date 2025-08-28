@@ -90,7 +90,7 @@ def ieso_demand_data_pipeline():
                 # Data cleaning and type conversion
                 df['Date'] = pd.to_datetime(df['Date'], errors='coerce', format='%Y-%m-%d')
                 df.dropna(subset=['Date'], inplace=True)
-                df['Modified_DT'] = pd.Timestamp.now().floor('S')
+                df['Modified_DT'] = pd.Timestamp.now().date()
                 #set dtype of other columns
                 df['Hour'] = pd.to_numeric(df['Hour'], errors='coerce')
                 df['Market_Demand'] = pd.to_numeric(df['Market_Demand'], errors='coerce')
