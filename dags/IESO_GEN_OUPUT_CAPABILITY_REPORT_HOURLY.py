@@ -241,6 +241,6 @@ def ouput_capability_report_pipeline():
     file_name = ieso_data_pull()
     df = transform_data(file_name)
     comp = update_00_ref(df, url)
-    # update_00_table_reg(comp, url)
+    update_00_table_reg(comp, url)
 
 ouput_capability_report_pipeline()
