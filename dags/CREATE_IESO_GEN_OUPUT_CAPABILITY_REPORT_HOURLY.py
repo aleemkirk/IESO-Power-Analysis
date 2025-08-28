@@ -181,8 +181,8 @@ def output_capability_report_pipeline():
             return
 
         #get the current date time that the table was updated
-        update_dt = pd.Timestamp.now().date()
-        update_time = pd.Timestamp.now().time()
+        update_dt = pd.Timestamp.now(tz="America/Toronto").date()
+        update_time = pd.Timestamp.now(tz="America/Toronto").time()
         logger.info(f"Updating table '00_TABLE_REGISTER' to date '{update_dt}'.")
 
         try:
