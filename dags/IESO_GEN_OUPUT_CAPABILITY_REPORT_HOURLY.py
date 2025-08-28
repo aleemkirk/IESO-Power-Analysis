@@ -6,7 +6,7 @@ from airflow.sdk import dag, task
 from datetime import datetime, timedelta
 import requests
 import pandas as pd
-from sqlalchemy import create_engine, create_engine, MetaData, Table, update
+from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
 import logging
 from lxml import etree
 from pandas.core.interchange.dataframe_protocol import DataFrame
@@ -153,18 +153,37 @@ def ouput_capability_report_pipeline():
             raise e  # Re-raise the exception to fail the task
 
         try:
-            with engine.connect() as conn:
-                logger.info(f"Connection to database successful. Writing data to table '{table_name}'...")
+            # load the table details
+            metadata = MetaData(schema=db_schema)
+            # Reflect the table structure from the database
+            table = Table(table_name, metadata, autoload_with=engine)
 
-                # The .to_sql method will create the table if it doesn't exist
+            with engine.begin() as conn:
+                logger.info(f"Connection to database successful. Reading date from table '{table_name}'...")
+                stmt = (
+                    select(func.max(table.c.Date))
+                )
+                last_date = conn.execute(stmt).scalar()
+                current_date = pd.Timestamp.now(tz="America/Toronto").date()
+                logger.info("Current date is last date" if current_date == last_date else f"Last date is oudated.")
+
+                #delete today's entries
+                drop_entries = (
+                    delete(table).where(table.c.Date == current_date)
+                )
+                deleted = conn.execute(drop_entries)
+                logger.info(f"Deleted {deleted.rowcount} rows where Date = {current_date}.")
+
+                #update the table with the most recent data
                 df.to_sql(
                     name=table_name,
                     con=conn,
                     schema=db_schema,
-                    if_exists='replace',
-                    index=False
+                    if_exists="append",
+                    index=False,
                 )
-                logger.info(f"Successfully wrote data to table '{table_name}' in schema '{db_schema}'.")
+                logger.info(f"Inserted {len(df)} rows into table '{table_name}'.")
+
 
             return True
 
@@ -222,6 +241,6 @@ def ouput_capability_report_pipeline():
     file_name = ieso_data_pull()
     df = transform_data(file_name)
     comp = update_00_ref(df, url)
-    update_00_table_reg(comp, url)
+    # update_00_table_reg(comp, url)
 
 ouput_capability_report_pipeline()
