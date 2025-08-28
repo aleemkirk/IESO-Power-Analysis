@@ -121,7 +121,7 @@ def output_capability_report_pipeline():
 
                 for hr in sorted(hours, key=lambda x: int(x)):
                     rows.append({
-                        "Date": report_date,
+                        "Date": pd.to_datetime(report_date).date(),
                         "Hour": int(hr),
                         "GeneratorName": gen_name,
                         "FuelType": fuel_type,
