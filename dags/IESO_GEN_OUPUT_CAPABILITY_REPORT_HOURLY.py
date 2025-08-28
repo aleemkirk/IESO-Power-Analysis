@@ -141,7 +141,33 @@ def ouput_capability_report_pipeline():
             raise e  # Re-raise the exception to fail the task
 
     @task
-    def update_00_ref(df: DataFrame, db_url, table_name='00_GEN_OUTPUT_CAPABILITY_HOURLY', db_schema='00_RAW') -> bool:
+    def update_00_ref(df: DataFrame, db_url, table_name='00_GEN_OUTPUT_CAPABILITY_HOURLY', db_schema='00_RAW', local_filename = 'PUB_GenOutputCapability.xml') -> bool:
+
+        #get report date
+        try:
+            # Parse XML
+            tree = etree.parse(local_filename)
+            root = tree.getroot()
+
+            # Extract namespace (if any)
+            ns = root.nsmap
+            # Some XML files use a default namespace (None key in nsmap), remap it to "ns"
+            if None in ns:
+                ns["ns"] = ns.pop(None)
+
+            logger.info(f"Successfully loaded xml data {local_filename}")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error loading the file: {e}")
+            raise e  # Re-raise the exception to fail the task
+
+        try:
+            # Extract date
+            report_date = pd.to_datetime(root.find(".//ns:Date", ns).text).date()
+
+        except Exception as e:
+            logger.error(f"Cannot get report date: {e}")
+            raise e  # Re-raise the exception to fail the task
 
         try:
             logger.info("Attempting to connect to the PostgreSQL database...")
@@ -169,7 +195,7 @@ def ouput_capability_report_pipeline():
 
                 #delete today's entries
                 drop_entries = (
-                    delete(table).where(table.c.Date == current_date)
+                    delete(table).where(table.c.Date == report_date)
                 )
                 deleted = conn.execute(drop_entries)
                 logger.info(f"Deleted {deleted.rowcount} rows where Date = {current_date}.")
@@ -240,7 +266,7 @@ def ouput_capability_report_pipeline():
     url = postgres_connection()
     file_name = ieso_data_pull()
     df = transform_data(file_name)
-    comp = update_00_ref(df, url)
+    comp = update_00_ref(df, url, local_filename=file_name)
     update_00_table_reg(comp, url)
 
 ouput_capability_report_pipeline()
