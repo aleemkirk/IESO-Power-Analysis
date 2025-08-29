@@ -8,17 +8,16 @@ import requests
 import os
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
-from sqlalchemy import create_engine
+from sqlalchemy import  create_engine, create_engine, MetaData, Table, update, select, func, delete
 import logging
-from typing import Any
 
 
 @dag (
     dag_id = 'hourly_ieso_demand_pipeline_one_time',
-    schedule = "@once",
+    schedule = "@hourly",
     start_date = datetime(2020, 1, 1),
     catchup = False,
-    tags = ['demand', 'data-pipeline', 'ieso', 'postgres']
+    tags = ['demand', 'data-pipeline', 'ieso', 'postgres', 'hourly']
 )
 def ieso_demand_data_pipeline():
     # Set up a logger for this specific task
@@ -99,7 +98,13 @@ def ieso_demand_data_pipeline():
                 logger.info("\nFirst 5 rows of the processed data:")
                 logger.info(df.head())
 
-                return df
+                current_date = pd.Timestamp.now(tz="America/Toronto").date()
+                filtered_df = df[df['Date'] == df['Date'].max()]
+
+                logger.info("\nFirst 5 rows of the filtered data:")
+                logger.info(filtered_df.head())
+
+                return filtered_df
 
             else:
                 logger.error(f"File {local_filename} was not found, cannot read.")
@@ -123,18 +128,32 @@ def ieso_demand_data_pipeline():
             raise e  # Re-raise the exception to fail the task
 
         try:
+            # load the table details
+            metadata = MetaData(schema=db_schema)
+            # Reflect the table structure from the database
+            table = Table(table_name, metadata, autoload_with=engine)
+
+            max_date = df['Date'].max()
+
             with engine.connect() as conn:
                 logger.info(f"Connection to database successful. Writing data to table '{table_name}'...")
+
+                # delete today's entries
+                drop_entries = (
+                    delete(table).where(table.c.Date == max_date)
+                )
+                deleted = conn.execute(drop_entries)
+                logger.info(f"Deleted {deleted.rowcount} rows where Date = {max_date}.")
 
                 # The .to_sql method will create the table if it doesn't exist
                 df.to_sql(
                     name=table_name,
                     con=conn,
                     schema=db_schema,
-                    if_exists='replace',
+                    if_exists='append',
                     index=False
                 )
-                logger.info(f"Successfully wrote data to table '{table_name}' in schema '{db_schema}'.")
+                logger.info(f"Successfully inserted data to table '{table_name}' in schema '{db_schema}'.")
 
         except Exception as e:
             logger.error(f"Error writing to PostgreSQL database: {e}")
