@@ -13,7 +13,7 @@ import logging
 
 
 @dag (
-    dag_id = 'hourly_ieso_demand_pipeline_one_time',
+    dag_id = 'hourly_ieso_demand_pipeline',
     schedule = "@hourly",
     start_date = datetime(2020, 1, 1),
     catchup = False,
