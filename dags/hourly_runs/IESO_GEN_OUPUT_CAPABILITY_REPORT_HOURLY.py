@@ -13,7 +13,7 @@ from pandas.core.interchange.dataframe_protocol import DataFrame
 
 
 @dag(
-    dag_id = 'ieso_gen_output_capability_report',
+    dag_id = 'hourly_ieso_gen_output_capability_report',
     schedule = "@hourly",
     catchup = False,
     start_date=datetime(2020, 1, 1),
