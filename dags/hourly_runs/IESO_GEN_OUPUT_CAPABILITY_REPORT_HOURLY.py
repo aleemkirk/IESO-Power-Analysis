@@ -242,14 +242,23 @@ def ouput_capability_report_pipeline():
             metadata = MetaData(schema='00_REF')
             # Reflect the table structure from the database
             table = Table('00_TABLE_REGISTER', metadata, autoload_with=engine)
+            query_table = Table(table_name, MetaData(schema=db_schema), autoload_with=engine)
 
             with engine.begin() as conn:
                 logger.info(f"Connection to database successful. Writing data to table '{table_name}'...")
+
+                row_cnt_stmt = (
+                    select(func.count()).select_from(query_table)
+                )
+                result = conn.execute(row_cnt_stmt)
+                row_count = result.scalar()
+
                 stmt = (
                     update(table)
                     .where((table.c.TABLE_NAME == table_name) &
                            (table.c.TABLE_SCHEMA == db_schema))  # optional filter if needed
                     .values(MODIFIED_DT=update_dt)  # set columns
+                    .values(ROW_COUNT=row_count)
 
                 )
                 result = conn.execute(stmt)
