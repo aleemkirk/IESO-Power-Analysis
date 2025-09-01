@@ -155,7 +155,7 @@ def ieso_zonal_demand_data_pipeline():
 
             metadata = MetaData(schema=db_schema)
             # Reflect the table structure from the database
-            table = Table(table_name, metadata, autoload_with=engine)
+            db_table = Table(table_name, metadata, autoload_with=engine)
 
             max_date = df['Date'].max()
 
@@ -164,7 +164,7 @@ def ieso_zonal_demand_data_pipeline():
 
                 # delete today's entries
                 drop_entries = (
-                    delete(table).where(table.c.Date == max_date)
+                    delete(db_table).where(db_table.c.Date == max_date)
                 )
                 deleted = conn.execute(drop_entries)
                 logger.info(f"Deleted {deleted.rowcount} rows where Date = {max_date}.")
