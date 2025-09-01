@@ -23,6 +23,10 @@ from typing import Any
 def ieso_zonal_demand_data_pipeline():
     # Set up a logger for this specific task
     logger = logging.getLogger("airflow.task")
+    table = '00_IESO_ZONAL_DEMAND'
+    schema = '00_RAW'
+    base_url = 'https://reports-public.ieso.ca/public/DemandZonal/'
+    filename = 'PUB_DemandZonal.csv'
 
     @task
     def postgres_connection() -> str:
