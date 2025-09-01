@@ -38,13 +38,11 @@ def update_00_table_reg(complete, logger: logging.Logger, db_url, table_name, db
             result = conn.execute(row_cnt_stmt)
             row_count = result.scalar()
 
-            stmt = (
-                update(table)
-                .where((table.c.TABLE_NAME == table_name) &
-                       (table.c.TABLE_SCHEMA == db_schema))  # optional filter if needed
-                .values(MODIFIED_DT=update_dt)  # set columns
-                .values(ROW_COUNT=row_count)
-
+            stmt = insert(table).values(
+                TABLE_NAME=table_name,
+                TABLE_SCHEMA=db_schema,
+                MODIFIED_DT=update_dt,
+                ROW_COUNT=row_count
             )
             result = conn.execute(stmt)
 
