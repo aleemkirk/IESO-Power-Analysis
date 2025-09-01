@@ -15,7 +15,7 @@ from typing import Any
 
 @dag (
     dag_id = 'hourly_ieso_zonal_demand_pipeline',
-    schedule = "@once",
+    schedule = "@hourly",
     start_date = datetime(2020, 1, 1),
     catchup = False,
     tags = ['demand', 'data-pipeline', 'ieso', 'postgres', 'zonal']
