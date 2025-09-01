@@ -10,7 +10,7 @@ import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
 import logging
-from typing import Any
+import utils.updates as updates
 
 
 @dag (
@@ -21,7 +21,7 @@ from typing import Any
     tags = ['demand', 'data-pipeline', 'ieso', 'postgres', 'zonal']
 )
 def ieso_zonal_demand_data_pipeline():
-    # Set up a logger for this specific task
+    # Set up global variables
     logger = logging.getLogger("airflow.task")
     table = '00_IESO_ZONAL_DEMAND'
     schema = '00_RAW'
@@ -55,10 +55,6 @@ def ieso_zonal_demand_data_pipeline():
 
     @task
     def ieso_zonal_demand_data_pull() -> str:
-
-        # Define file and table names
-        base_url = 'https://reports-public.ieso.ca/public/DemandZonal/'
-        filename = 'PUB_DemandZonal.csv'
         url = f"{base_url}{filename}"
         local_filename = filename
 
@@ -189,10 +185,17 @@ def ieso_zonal_demand_data_pipeline():
             raise e  # Re-raise the exception to fail the task
 
 
+    @task
+    def update_00_table_reg(complete, logger, db_url, table_name, db_schema):
+        updates.update_00_table_reg(complete, logger, db_url, table_name, db_schema)
+
+
+
     url = postgres_connection()
     file_name = ieso_zonal_demand_data_pull()
     df = transform_data(file_name)
-    update_00_ref(df, url)
+    status = update_00_ref(df, url)
+    update_00_table_reg(status, logger, url, table, schema)
 
 
 ieso_zonal_demand_data_pipeline()
