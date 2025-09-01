@@ -178,6 +178,7 @@ def ieso_zonal_demand_data_pipeline():
                     index=False
                 )
                 logger.info(f"Successfully inserted data to table '{table_name}' in schema '{db_schema}'.")
+                return True
 
         except Exception as e:
             logger.error(f"Error writing to PostgreSQL database: {e}")
