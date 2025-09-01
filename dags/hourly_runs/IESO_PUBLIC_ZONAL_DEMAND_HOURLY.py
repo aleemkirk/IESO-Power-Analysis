@@ -3,14 +3,14 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.sdk import dag, task
 from airflow.models import Variable
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 import os
 import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
 import logging
-import utils.updates as updates
+from utils import updates
 
 
 @dag (
