@@ -144,7 +144,7 @@ def ieso_zonal_demand_data_pipeline():
 
 
     @task
-    def update_00_ref(df:DataFrame, db_url,  table_name = '00_IESO_ZONAL_DEMAND', db_schema = '00_RAW'):
+    def update_00_ref(df:DataFrame, db_url,  table_name = table, db_schema = schema) -> bool:
 
         try:
             logger.info("Attempting to connect to the PostgreSQL database...")
