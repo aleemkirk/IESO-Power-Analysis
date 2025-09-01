@@ -1,6 +1,6 @@
 import logging
 import pandas as pd
-from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
+from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete, insert
 
 
 def update_00_table_reg(complete, logger: logging.Logger, db_url, table_name, db_schema):
