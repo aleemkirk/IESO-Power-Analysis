@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, create_engine, MetaData, Table, update, se
 import logging
 from lxml import etree
 from pandas.core.interchange.dataframe_protocol import DataFrame
+from utils import updates
 
 
 @dag(
@@ -21,6 +22,11 @@ from pandas.core.interchange.dataframe_protocol import DataFrame
 )
 def ouput_capability_report_pipeline():
     logger = logging.getLogger("airflow.task")
+    base_url = 'https://reports-public.ieso.ca/public/GenOutputCapability/'
+    filename = 'PUB_GenOutputCapability.xml'
+    table = '00_GEN_OUTPUT_CAPABILITY_HOURLY'
+    schema = '00_RAW'
+
 
     @task(retries=2, retry_delay=timedelta(minutes=5))
     def postgres_connection() -> str:
@@ -50,8 +56,7 @@ def ouput_capability_report_pipeline():
     def ieso_data_pull() -> str:
 
         # Define file and table names
-        base_url = 'https://reports-public.ieso.ca/public/GenOutputCapability/'
-        filename = 'PUB_GenOutputCapability.xml'
+
         url = f"{base_url}{filename}"
         local_filename = filename
 
@@ -141,7 +146,7 @@ def ouput_capability_report_pipeline():
             raise e  # Re-raise the exception to fail the task
 
     @task
-    def update_00_ref(df: DataFrame, db_url, table_name='00_GEN_OUTPUT_CAPABILITY_HOURLY', db_schema='00_RAW', local_filename = 'PUB_GenOutputCapability.xml') -> bool:
+    def update_00_ref(df: DataFrame, db_url, table_name=table, db_schema=schema, local_filename = 'PUB_GenOutputCapability.xml') -> bool:
 
         #get report date
         try:
@@ -218,64 +223,13 @@ def ouput_capability_report_pipeline():
             raise e  # Re-raise the exception to fail the task
 
     @task
-    def update_00_table_reg(complete, db_url, table_name='00_GEN_OUTPUT_CAPABILITY_HOURLY', db_schema='00_RAW'):
-
-        if not complete:
-            logger.info('00_REF table was not updated.')
-            return
-
-        # get the current date time that the table was updated
-        update_dt = pd.Timestamp.now(tz="America/Toronto").date()
-        logger.info(f"Updating table '00_TABLE_REGISTER' to date '{update_dt}'.")
-
-        try:
-            logger.info("Attempting to connect to the PostgreSQL database...")
-            engine = create_engine(db_url)
-            logger.info("Database connection established.")
-
-        except Exception as e:
-            logger.error(
-                f"Error establishing connection to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
-        try:
-            # load the table details
-            metadata = MetaData(schema='00_REF')
-            # Reflect the table structure from the database
-            table = Table('00_TABLE_REGISTER', metadata, autoload_with=engine)
-            query_table = Table(table_name, MetaData(schema=db_schema), autoload_with=engine)
-
-            with engine.begin() as conn:
-                logger.info(f"Connection to database successful. Writing data to table '{table_name}'...")
-
-                row_cnt_stmt = (
-                    select(func.count()).select_from(query_table)
-                )
-                result = conn.execute(row_cnt_stmt)
-                row_count = result.scalar()
-
-                stmt = (
-                    update(table)
-                    .where((table.c.TABLE_NAME == table_name) &
-                           (table.c.TABLE_SCHEMA == db_schema))  # optional filter if needed
-                    .values(MODIFIED_DT=update_dt)  # set columns
-                    .values(ROW_COUNT=row_count)
-
-                )
-                result = conn.execute(stmt)
-
-            logger.info(result)
-
-            logger.info(f"Successfully wrote data to table '{table_name}' in schema '{db_schema}'.")
-            logger.info(table.c.keys())
-
-        except Exception as e:
-            logger.error(f"Error writing to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
+    def update_00_table_reg(complete, logger, db_url, table_name, db_schema):
+        updates.update_00_table_reg(complete, logger, db_url, table_name, db_schema)
 
     url = postgres_connection()
     file_name = ieso_data_pull()
     df = transform_data(file_name)
-    comp = update_00_ref(df, url, local_filename=file_name)
-    update_00_table_reg(comp, url)
+    status = update_00_ref(df, url, local_filename=file_name)
+    update_00_table_reg(status, logger, url, table, schema)
 
 ouput_capability_report_pipeline()
