@@ -336,14 +336,14 @@ services:
     image: k8s.gcr.io/git-sync/git-sync:v3.6.5
     restart: always
     environment:
-      - GIT_SYNC_REPO=https://github.com/aleemkirk/IESO-Power-Analysis.git
+      - GIT_SYNC_REPO=https://${GIT_TOKEN}@github.com/aleemkirk/IESO-Power-Analysis.git
       - GIT_SYNC_BRANCH=main
       - GIT_SYNC_WAIT=100
       - GIT_SYNC_ONE_TIME=false
       - GIT_SYNC_ROOT=/git
-      - GIT_SYNC_DEST=repo
+      - GIT_SYNC_DEST=.
     volumes:
-      - airflow-dags:/git/repo  
+      - airflow-dags:/git
 
 
 volumes:
