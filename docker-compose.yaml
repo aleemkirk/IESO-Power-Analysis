@@ -73,7 +73,7 @@ x-airflow-common:
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
   volumes:
-    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - airflow-dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
@@ -332,5 +332,20 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  git-sync:
+    image: k8s.gcr.io/git-sync/git-sync:v3.6.5
+    restart: always
+    environment:
+      - GIT_SYNC_REPO=https://github.com/aleemkirk/IESO-Power-Analysis.git
+      - GIT_SYNC_BRANCH=main
+      - GIT_SYNC_WAIT=100
+      - GIT_SYNC_ONE_TIME=false
+      - GIT_SYNC_ROOT=/git
+      - GIT_SYNC_DEST=repo
+    volumes:
+      - airflow-dags:/git/repo   # ✅ same shared volume as Airflow DAGs
+
+
 volumes:
   postgres-db-volume:
+  airflow-dags:
