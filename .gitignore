@@ -2,3 +2,4 @@
 /.idea
 /tests
 variable.json
+.env
