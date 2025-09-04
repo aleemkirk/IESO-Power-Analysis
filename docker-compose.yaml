@@ -343,7 +343,7 @@ services:
       - GIT_SYNC_ROOT=/git
       - GIT_SYNC_DEST=repo
     volumes:
-      - airflow-dags:/git/repo   # ✅ same shared volume as Airflow DAGs
+      - airflow-dags:/git/repo  
 
 
 volumes:
