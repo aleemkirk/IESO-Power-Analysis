@@ -28,7 +28,7 @@ def ouput_capability_report_pipeline():
     schema = '00_RAW'
 
 
-    @task(retries=2, retry_delay=timedelta(minutes=5))
+    @task
     def postgres_connection() -> str:
         # Access database credentials from Airflow Variables
         try:
