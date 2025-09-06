@@ -10,7 +10,7 @@ import pandas as pd
 from pandas.core.interchange.dataframe_protocol import DataFrame
 from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
 import logging
-from utils import updates
+from dags.utils import updates
 
 
 @dag (
