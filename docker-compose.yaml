@@ -147,6 +147,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+      git-sync:
+        condition: service_started
 
   airflow-dag-processor:
     <<: *airflow-common
@@ -333,15 +335,16 @@ services:
         condition: service_completed_successfully
 
   git-sync:
-    image: k8s.gcr.io/git-sync/git-sync:v3.6.5
+    image: openweb/git-sync:0.0.1
+#    user: "50000:0"
     restart: always
     environment:
-      - GIT_SYNC_REPO=https://${GIT_TOKEN}@github.com/aleemkirk/IESO-Power-Analysis.git
+      - GIT_SYNC_REPO=https://github.com/aleemkirk/IESO-Power-Analysis.git
+      - GIT_SYNC_DEST=/git
       - GIT_SYNC_BRANCH=main
-      - GIT_SYNC_WAIT=100
       - GIT_SYNC_ONE_TIME=false
-      - GIT_SYNC_ROOT=/git
-      - GIT_SYNC_DEST=.
+      - GIT_SYNC_REV=FETCH_HEAD
+      - GIT_SYNC_WAIT=10
     volumes:
       - airflow-dags:/git
 
