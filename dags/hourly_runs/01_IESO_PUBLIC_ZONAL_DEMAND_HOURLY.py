@@ -11,11 +11,12 @@ from pandas.core.interchange.dataframe_protocol import DataFrame
 from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
 import logging
 from dags.utils import updates
+from airflow.sensors.external_task import ExternalTaskSensor
 
 
 @dag (
     dag_id = '01_hourly_ieso_zonal_demand_pipeline',
-    schedule = '@once',
+    schedule = '@hourly',
     start_date = datetime(2020, 1, 1),
     catchup = False,
     tags = ['demand', 'data-pipeline', 'ieso', 'postgres', 'zonal']
@@ -25,6 +26,15 @@ def ieso_zonal_demand_01_data_pipeline():
     logger = logging.getLogger("airflow.task")
     table = '01_IESO_ZONAL_DEMAND'
     schema = '01_PRI'
+
+    wait_for_00_zonal = ExternalTaskSensor(
+        task_id="wait_for_00_zonal",
+        external_dag_id="hourly_ieso_zonal_demand_pipeline",  # dag_id of DAG1
+        external_task_id=None,  # None means "wait for whole DAG1"
+        poke_interval=60,  # check every 60s
+        timeout=60 * 60,  # 1 hour before failing
+        mode="poke"  # or "reschedule" to free worker slots
+    )
 
     @task
     def postgres_connection() -> str:
@@ -137,8 +147,7 @@ def ieso_zonal_demand_01_data_pipeline():
     def update_00_table_reg(complete, logger, db_url, table_name, db_schema):
         updates.update_00_table_reg(complete, logger, db_url, table_name, db_schema)
 
-
-
+    wait_for_00_zonal >> postgres_connection()
     url = postgres_connection()
     data = ieso_zonal_demand_data_pull(url, '00_RAW', '00_IESO_ZONAL_DEMAND')
     trans_data = transform_data(data)
