@@ -15,7 +15,7 @@ from dags.utils import updates
 
 @dag (
     dag_id = '01_hourly_ieso_zonal_demand_pipeline',
-    schedule = None,
+    schedule = '@once',
     start_date = datetime(2020, 1, 1),
     catchup = False,
     tags = ['demand', 'data-pipeline', 'ieso', 'postgres', 'zonal']
