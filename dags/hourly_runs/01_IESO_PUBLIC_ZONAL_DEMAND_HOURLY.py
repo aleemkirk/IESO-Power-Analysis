@@ -147,15 +147,12 @@ def ieso_zonal_demand_01_data_pipeline():
     def update_00_table_reg(complete, logger, db_url, table_name, db_schema):
         updates.update_00_table_reg(complete, logger, db_url, table_name, db_schema)
 
-    wait_for_00_zonal >> postgres_connection()
     url = postgres_connection()
     data = ieso_zonal_demand_data_pull(url, '00_RAW', '00_IESO_ZONAL_DEMAND')
     trans_data = transform_data(data)
     status = update_01_pri(trans_data, url, schema, table)
-
     update_00_table_reg(status, logger, url, table, schema)
 
-
-
+    wait_for_00_zonal >> url
 
 ieso_zonal_demand_01_data_pipeline()
