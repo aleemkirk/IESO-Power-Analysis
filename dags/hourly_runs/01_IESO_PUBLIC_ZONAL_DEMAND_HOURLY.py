@@ -117,7 +117,7 @@ def ieso_zonal_demand_01_data_pipeline():
         try:
             metadata = MetaData(schema=db_schema)
             # Reflect the table structure from the database
-            db_table = Table(table_name, metadata, autoload_with=engine)
+            # db_table = Table(table_name, metadata, autoload_with=engine)
 
             with engine.connect() as conn:
                 df.to_sql(
