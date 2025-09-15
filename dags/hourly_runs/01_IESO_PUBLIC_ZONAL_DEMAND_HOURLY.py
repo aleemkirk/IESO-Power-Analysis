@@ -124,7 +124,7 @@ def ieso_zonal_demand_01_data_pipeline():
                     name=table_name,
                     con=conn,
                     schema=db_schema,
-                    if_exists='replace',
+                    if_exists='append',
                     index=False
                 )
                 logger.info(f"Successfully replaced data in table '{table_name}' in schema '{db_schema}'.")
