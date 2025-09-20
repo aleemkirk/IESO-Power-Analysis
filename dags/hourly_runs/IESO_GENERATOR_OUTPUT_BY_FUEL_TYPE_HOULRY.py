@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, create_engine, MetaData, Table, update, se
 import logging
 from lxml import etree
 from pandas.core.interchange.dataframe_protocol import DataFrame
-from utils import updates
+from dags.utils import updates
 
 @dag (
     dag_id = 'hourly_ieso_output_by_fuel_hourly',

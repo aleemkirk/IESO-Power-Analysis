@@ -1,4 +1,5 @@
 /logs
 /.idea
-#/tests
+/tests
 variable.json
+.env

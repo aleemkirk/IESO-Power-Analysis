@@ -10,7 +10,7 @@ from sqlalchemy import create_engine, create_engine, MetaData, Table, update, se
 import logging
 from lxml import etree
 from pandas.core.interchange.dataframe_protocol import DataFrame
-from utils import updates
+from dags.utils import updates
 
 
 @dag(
@@ -28,7 +28,7 @@ def ouput_capability_report_pipeline():
     schema = '00_RAW'
 
 
-    @task(retries=2, retry_delay=timedelta(minutes=5))
+    @task
     def postgres_connection() -> str:
         # Access database credentials from Airflow Variables
         try:
