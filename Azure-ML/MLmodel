@@ -1,0 +1,25 @@
+artifact_path: outputs/mlflow-model
+flavors:
+  automl-forecasting:
+    forecasting_model_type: fc.model_type.sklearn
+  python_function:
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: azureml.training.tabular.models.mlflow.timeseries
+    model_path: model.pkl
+    predict_fn: predict
+    python_version: 3.9.22
+  sklearn:
+    code: null
+    pickled_model: model.pkl
+    serialization_format: pickle
+    sklearn_version: 1.5.1
+metadata:
+  azureml.base_image: mcr.microsoft.com/azureml/curated/ai-ml-automl:22
+  azureml.engine: automl
+mlflow_version: 2.15.1
+model_size_bytes: 1267302
+model_uuid: d278ef142ffd4f93bb3259e56828997f
+run_id: ieso-training-3_243
+utc_time_created: '2025-09-20 07:44:14.618162'
