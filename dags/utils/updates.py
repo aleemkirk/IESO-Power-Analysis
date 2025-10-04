@@ -11,7 +11,8 @@ def update_00_table_reg(complete, logger: logging.Logger, db_url, table_name, db
 
     # get the current date time that the table was updated
     update_dt = pd.Timestamp.now(tz="America/Toronto").date()
-    logger.info(f"Updating table '00_TABLE_REGISTER' to date '{update_dt}'.")
+    update_timestamp = pd.Timestamp.now(tz="America/Toronto")
+    logger.info(f"Updating table '00_TABLE_REGISTER' to date '{update_dt}' at timestamp '{update_timestamp}'.")
 
     try:
         logger.info("Attempting to connect to the PostgreSQL database...")
@@ -42,6 +43,7 @@ def update_00_table_reg(complete, logger: logging.Logger, db_url, table_name, db
                 TABLE_NAME=table_name,
                 TABLE_SCHEMA=db_schema,
                 MODIFIED_DT=update_dt,
+                MODIFIED_TIME=update_timestamp,
                 ROW_COUNT=row_count
             )
             result = conn.execute(stmt)
