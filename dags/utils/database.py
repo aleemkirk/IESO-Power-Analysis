@@ -7,7 +7,7 @@ eliminating code duplication across DAG files.
 
 import logging
 from typing import Optional
-from sqlalchemy import create_engine, Engine
+from sqlalchemy import create_engine
 from airflow.models import Variable
 
 logger = logging.getLogger(__name__)
