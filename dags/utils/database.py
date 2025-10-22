@@ -58,7 +58,7 @@ def get_database_url() -> str:
         ) from e
 
 
-def get_engine(db_url: Optional[str] = None, **kwargs) -> Engine:
+def get_engine(db_url: Optional[str] = None, **kwargs) -> "Engine":
     """
     Create SQLAlchemy engine with connection pooling.
 
