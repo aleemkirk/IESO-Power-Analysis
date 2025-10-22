@@ -43,14 +43,14 @@ def ieso_demand_data_pipeline():
     5. Note: Does NOT update table register (one-time load)
     """
 
-    # Load configuration
-    table_name = get_table_name('demand')
-    schema_name = get_schema_name('raw')
-    endpoint_url = get_ieso_url('demand')
-    filename = 'PUB_Demand.csv'
-    timeout = get_config('ieso.download_timeout', default=30)
-    chunk_size = get_config('ieso.chunk_size', default=8192)
-    timezone = get_config('timezone', default='America/Toronto')
+    # Load configuration - capture at DAG definition time
+    _table_name = get_table_name('demand')
+    _schema_name = get_schema_name('raw')
+    _endpoint_url = get_ieso_url('demand')
+    _filename = 'PUB_Demand.csv'
+    _timeout = get_config('ieso.download_timeout', default=30)
+    _chunk_size = get_config('ieso.chunk_size', default=8192)
+    _timezone = get_config('timezone', default='America/Toronto')
 
     @task
     def postgres_connection() -> str:
@@ -77,26 +77,26 @@ def ieso_demand_data_pipeline():
             requests.exceptions.RequestException: If download fails
         """
         try:
-            logger.info(f"Downloading FULL historical data from {endpoint_url}...")
-            response = requests.get(endpoint_url, stream=True, timeout=timeout)
+            logger.info(f"Downloading FULL historical data from {_endpoint_url}...")
+            response = requests.get(_endpoint_url, stream=True, timeout=_timeout)
             response.raise_for_status()
 
-            with open(filename, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
+            with open(_filename, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=_chunk_size):
                     if chunk:
                         f.write(chunk)
 
-            logger.info(f"Successfully downloaded {filename}")
-            return filename
+            logger.info(f"Successfully downloaded {_filename}")
+            return _filename
 
         except requests.exceptions.Timeout as e:
-            logger.error(f"Timeout downloading {endpoint_url}: {e}")
+            logger.error(f"Timeout downloading {_endpoint_url}: {e}")
             raise
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error {e.response.status_code} downloading {endpoint_url}: {e}")
+            logger.error(f"HTTP error {e.response.status_code} downloading {_endpoint_url}: {e}")
             raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading {endpoint_url}: {e}")
+            logger.error(f"Error downloading {_endpoint_url}: {e}")
             raise
 
     @task
@@ -131,7 +131,7 @@ def ieso_demand_data_pipeline():
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce', format=date_format)
             df.dropna(subset=['Date'], inplace=True)
 
-            df['Modified_DT'] = pd.Timestamp.now(tz=timezone).date()
+            df['Modified_DT'] = pd.Timestamp.now(tz=_timezone).date()
             df['Hour'] = pd.to_numeric(df['Hour'], errors='coerce')
             df['Market_Demand'] = pd.to_numeric(df['Market_Demand'], errors='coerce')
             df['Ontario_Demand'] = pd.to_numeric(df['Ontario_Demand'], errors='coerce')
@@ -155,8 +155,8 @@ def ieso_demand_data_pipeline():
     def write_to_database(
         df: pd.DataFrame,
         db_url: str,
-        table_name: str = table_name,
-        db_schema: str = schema_name
+        table_name: str = _table_name,
+        db_schema: str = _schema_name
     ) -> bool:
         """
         Write ALL historical demand data to PostgreSQL.
