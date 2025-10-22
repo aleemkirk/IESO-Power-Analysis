@@ -1,130 +1,191 @@
-# Import the necessary libraries from Airflow
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.models import Variable
+"""
+IESO Generator Output Capability Report Hourly Pipeline
+
+This DAG downloads hourly generator output and capability data from IESO's
+public API (XML format), parses nested generator/hour structure, and loads
+it into PostgreSQL.
+
+Schedule: @hourly
+Target Table: 00_RAW.00_GEN_OUTPUT_CAPABILITY_HOURLY
+Data Format: XML (complex nested structure)
+"""
+
 from airflow.sdk import dag, task
 from datetime import datetime, timedelta
 import requests
 import pandas as pd
-from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
+from sqlalchemy import MetaData, Table, delete
 import logging
 from lxml import etree
-from pandas.core.interchange.dataframe_protocol import DataFrame
+
+# Import shared utilities
+from dags.utils.database import get_database_url, get_engine
 from dags.utils import updates
+from config.config_loader import get_ieso_url, get_table_name, get_schema_name, get_config
+
+logger = logging.getLogger(__name__)
 
 
 @dag(
-    dag_id = 'hourly_ieso_gen_output_capability_report',
-    schedule = "@hourly",
-    catchup = False,
+    dag_id='hourly_ieso_gen_output_capability_report',
+    schedule="@hourly",
+    catchup=False,
     start_date=datetime(2020, 1, 1),
-    tags = ['generator', 'ouput', 'capability'],
+    tags=['generator', 'output', 'capability', 'data-pipeline', 'ieso', 'postgres', 'xml', 'refactored']
 )
-def ouput_capability_report_pipeline():
-    logger = logging.getLogger("airflow.task")
-    base_url = 'https://reports-public.ieso.ca/public/GenOutputCapability/'
-    filename = 'PUB_GenOutputCapability.xml'
-    table = '00_GEN_OUTPUT_CAPABILITY_HOURLY'
-    schema = '00_RAW'
+def output_capability_report_pipeline():
+    """
+    IESO Generator Output Capability Report Pipeline
 
+    Pipeline Steps:
+    1. Get database connection string
+    2. Download XML file from IESO API (with retries)
+    3. Parse complex nested XML structure (generators × hours)
+    4. Extract output, capability, and available capacity for each generator/hour
+    5. Write to PostgreSQL (delete/replace pattern)
+    6. Update table register with metadata
+    """
+
+    # Load configuration
+    table_name = get_table_name('capability')
+    schema_name = get_schema_name('raw')
+    endpoint_url = get_ieso_url('capability')
+    filename = 'PUB_GenOutputCapability.xml'
+    timeout = get_config('ieso.download_timeout', default=30)
+    timezone = get_config('timezone', default='America/Toronto')
 
     @task
     def postgres_connection() -> str:
-        # Access database credentials from Airflow Variables
-        try:
-            DB_USER = Variable.get('DB_USER')
-            DB_PASSWORD = Variable.get('DB_PASSWORD')
-            DB_HOST = Variable.get('HOST')
-            DB_PORT = Variable.get('DB_PORT', default_var='5432')
-            DB_NAME = Variable.get('DB')
+        """
+        Get PostgreSQL connection string from Airflow Variables.
 
-            logger.info("Database credentials loaded from Airflow Variables.")
-
-        except Exception as e:
-            logger.error(f"Error accessing Airflow Variables: {e}. Cannot proceed with DB write.")
-            # Raise an exception to fail the task if variables are not set
-            raise Exception("Airflow Variables not configured.")
-
-        # Construct the database connection string
-        DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        logger.info("Database URL created successfully.")
-
-        return DATABASE_URL
-
+        Returns:
+            str: Database connection URL
+        """
+        return get_database_url()
 
     @task(retries=2, retry_delay=timedelta(minutes=5))
     def ieso_data_pull() -> str:
+        """
+        Download IESO generator capability XML file with retries.
 
-        # Define file and table names
+        Downloads the latest generator output and capability data from
+        IESO's public API. Includes automatic retries for reliability.
 
-        url = f"{base_url}{filename}"
-        local_filename = filename
+        Returns:
+            str: Path to downloaded file
 
-        # --- 1. Download the file ---
+        Raises:
+            requests.exceptions.RequestException: If download fails after retries
+        """
         try:
-            response = requests.get(url)
+            logger.info(f"Downloading {endpoint_url}...")
+            response = requests.get(endpoint_url, timeout=timeout)
             response.raise_for_status()
 
-            with open(local_filename, "wb") as f:
+            with open(filename, "wb") as f:
                 f.write(response.content)
 
+            logger.info(f"Successfully downloaded {filename}")
             return filename
 
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout downloading {endpoint_url}: {e}")
+            raise
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error {e.response.status_code} downloading {endpoint_url}: {e}")
+            raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading the file: {e}")
-            raise e  # Re-raise the exception to fail the task
+            logger.error(f"Error downloading {endpoint_url}: {e}")
+            raise
 
     @task
-    def transform_data(local_filename) -> DataFrame:
+    def transform_data(local_filename: str) -> pd.DataFrame:
+        """
+        Parse XML and transform generator capability data.
+
+        Parses the IESO XML file with complex nested structure:
+        - Date (report date)
+        - Generator (multiple)
+          - GeneratorName
+          - FuelType
+          - Outputs → Output (Hour, EnergyMW)
+          - Capabilities → Capability (Hour, EnergyMW)
+          - Capacities → AvailCapacity (Hour, EnergyMW)
+
+        Flattens into tabular format with one row per generator-hour combination.
+
+        Args:
+            local_filename: Path to downloaded XML file
+
+        Returns:
+            DataFrame with columns: Date, Hour, GeneratorName, FuelType,
+            OutputEnergy, CapabilityEnergy, AvailCapacity
+
+        Raises:
+            etree.XMLSyntaxError: If XML parsing fails
+            KeyError: If expected XML elements are missing
+        """
         try:
             # Parse XML
+            logger.info(f"Parsing XML file: {local_filename}")
             tree = etree.parse(local_filename)
             root = tree.getroot()
 
-            # Extract namespace (if any)
-            ns = root.nsmap
-            # Some XML files use a default namespace (None key in nsmap), remap it to "ns"
-            if None in ns:
-                ns["ns"] = ns.pop(None)
+            # Extract namespace
+            nsmap = root.nsmap
+            if None in nsmap:
+                nsmap["ns"] = nsmap.pop(None)
+            else:
+                # Use configured namespace if no namespace in file
+                default_ns = get_config('xml.namespaces.default')
+                nsmap["ns"] = default_ns
 
-            logger.info(f"Successfully loaded xml data {local_filename}")
+            logger.info(f"XML namespace: {nsmap.get('ns', 'No namespace')}")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error loading the file: {e}")
-            raise e  # Re-raise the exception to fail the task
+        except etree.XMLSyntaxError as e:
+            logger.error(f"XML parsing error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error opening XML file: {e}")
+            raise
 
+        # Parse XML structure
         try:
-            # Extract date
-            report_date = root.find(".//ns:Date", ns).text
+            # Extract report date
+            report_date = root.find(".//ns:Date", nsmap).text
+            logger.info(f"Processing report for date: {report_date}")
 
             rows = []
 
             # Loop through each Generator
-            for gen in root.findall(".//ns:Generator", ns):
-                gen_name = gen.find("ns:GeneratorName", ns).text
-                fuel_type = gen.find("ns:FuelType", ns).text
+            for gen in root.findall(".//ns:Generator", nsmap):
+                gen_name = gen.find("ns:GeneratorName", nsmap).text
+                fuel_type = gen.find("ns:FuelType", nsmap).text
 
-                # Build dictionaries for outputs and capabilities keyed by Hour
+                # Build dictionaries for outputs, capabilities, and available capacities
+                # keyed by Hour
                 outputs = {
-                    o.find("ns:Hour", ns).text: o.find("ns:EnergyMW", ns).text
-                    for o in gen.findall("ns:Outputs/ns:Output", ns)
-                    if o.find("ns:Hour", ns) is not None and o.find("ns:EnergyMW", ns) is not None
+                    o.find("ns:Hour", nsmap).text: o.find("ns:EnergyMW", nsmap).text
+                    for o in gen.findall("ns:Outputs/ns:Output", nsmap)
+                    if o.find("ns:Hour", nsmap) is not None and o.find("ns:EnergyMW", nsmap) is not None
                 }
                 capabilities = {
-                    c.find("ns:Hour", ns).text: c.find("ns:EnergyMW", ns).text
-                    for c in gen.findall("ns:Capabilities/ns:Capability", ns)
-                    if c.find("ns:Hour", ns) is not None and c.find("ns:EnergyMW", ns) is not None
+                    c.find("ns:Hour", nsmap).text: c.find("ns:EnergyMW", nsmap).text
+                    for c in gen.findall("ns:Capabilities/ns:Capability", nsmap)
+                    if c.find("ns:Hour", nsmap) is not None and c.find("ns:EnergyMW", nsmap) is not None
                 }
                 avail_capacities = {
-                    a.find("ns:Hour", ns).text: a.find("ns:EnergyMW", ns).text
-                    for a in gen.findall("ns:Capacities/ns:AvailCapacity", ns)
-                    if a.find("ns:Hour", ns) is not None and a.find("ns:EnergyMW", ns) is not None
+                    a.find("ns:Hour", nsmap).text: a.find("ns:EnergyMW", nsmap).text
+                    for a in gen.findall("ns:Capacities/ns:AvailCapacity", nsmap)
+                    if a.find("ns:Hour", nsmap) is not None and a.find("ns:EnergyMW", nsmap) is not None
                 }
 
-                # Merge all hours
-                hours = set(outputs.keys()) | set(capabilities.keys()) | set(avail_capacities.keys())
+                # Merge all hours from all three data sources
+                all_hours = set(outputs.keys()) | set(capabilities.keys()) | set(avail_capacities.keys())
 
-                for hr in sorted(hours, key=lambda x: int(x)):
+                # Create a row for each hour
+                for hr in sorted(all_hours, key=lambda x: int(x)):
                     rows.append({
                         "Date": pd.to_datetime(report_date).date(),
                         "Hour": int(hr),
@@ -133,103 +194,133 @@ def ouput_capability_report_pipeline():
                         "OutputEnergy": float(outputs.get(hr, 0)),
                         "CapabilityEnergy": float(capabilities.get(hr, 0)),
                         "AvailCapacity": float(avail_capacities.get(hr, 0))
-
                     })
 
             # Create DataFrame
             df = pd.DataFrame(rows)
 
+            if len(df) == 0:
+                raise ValueError("No data extracted from XML file")
+
+            logger.info(f"Extracted {len(df)} records from XML")
+            logger.info(f"Report date: {report_date}")
+            logger.info(f"Number of generators: {df['GeneratorName'].nunique()}")
+            logger.info(f"Number of fuel types: {df['FuelType'].nunique()}")
+            logger.info(f"Fuel types: {df['FuelType'].unique().tolist()}")
+            logger.info(f"First 5 rows:\n{df.head()}")
+
             return df
 
+        except etree.XPathEvalError as e:
+            logger.error(f"XPath evaluation error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error reading and processing the XML file: {e}")
-            raise e  # Re-raise the exception to fail the task
+            logger.error(f"Error processing XML data: {e}")
+            raise
 
     @task
-    def update_00_ref(df: DataFrame, db_url, table_name=table, db_schema=schema, local_filename = 'PUB_GenOutputCapability.xml') -> bool:
+    def write_to_database(
+        df: pd.DataFrame,
+        db_url: str,
+        local_filename: str,
+        table_name: str = table_name,
+        db_schema: str = schema_name
+    ) -> bool:
+        """
+        Write generator capability data to PostgreSQL.
 
-        #get report date
+        Extracts the report date from XML, deletes existing records for that date,
+        then inserts new records.
+
+        Args:
+            df: DataFrame to write
+            db_url: Database connection string
+            local_filename: Path to XML file (needed to extract report date)
+            table_name: Target table name
+            db_schema: Target schema name
+
+        Returns:
+            bool: True if write successful
+
+        Raises:
+            SQLAlchemyError: If database operation fails
+        """
+        # Extract report date from XML
         try:
-            # Parse XML
             tree = etree.parse(local_filename)
             root = tree.getroot()
 
-            # Extract namespace (if any)
-            ns = root.nsmap
-            # Some XML files use a default namespace (None key in nsmap), remap it to "ns"
-            if None in ns:
-                ns["ns"] = ns.pop(None)
+            nsmap = root.nsmap
+            if None in nsmap:
+                nsmap["ns"] = nsmap.pop(None)
+            else:
+                default_ns = get_config('xml.namespaces.default')
+                nsmap["ns"] = default_ns
 
-            logger.info(f"Successfully loaded xml data {local_filename}")
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error loading the file: {e}")
-            raise e  # Re-raise the exception to fail the task
-
-        try:
-            # Extract date
-            report_date = pd.to_datetime(root.find(".//ns:Date", ns).text).date()
+            report_date = pd.to_datetime(root.find(".//ns:Date", nsmap).text).date()
+            logger.info(f"Report date from XML: {report_date}")
 
         except Exception as e:
-            logger.error(f"Cannot get report date: {e}")
-            raise e  # Re-raise the exception to fail the task
+            logger.error(f"Error extracting report date from XML: {e}")
+            raise
 
+        # Write to database
         try:
-            logger.info("Attempting to connect to the PostgreSQL database...")
-            engine = create_engine(db_url)
+            logger.info("Connecting to PostgreSQL database...")
+            engine = get_engine(db_url)
             logger.info("Database connection established.")
 
-        except Exception as e:
-            logger.error(f"Error establishing connection to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
-
-        try:
-            # load the table details
+            # Reflect table structure
             metadata = MetaData(schema=db_schema)
-            # Reflect the table structure from the database
             table = Table(table_name, metadata, autoload_with=engine)
 
             with engine.begin() as conn:
-                logger.info(f"Connection to database successful. Reading date from table '{table_name}'...")
-                stmt = (
-                    select(func.max(table.c.Date))
-                )
-                last_date = conn.execute(stmt).scalar()
-                current_date = pd.Timestamp.now(tz="America/Toronto").date()
-                logger.info("Current date is last date" if current_date == last_date else f"Last date is oudated.")
+                # Delete existing entries for this date
+                delete_stmt = delete(table).where(table.c.Date == report_date)
+                result = conn.execute(delete_stmt)
+                logger.info(f"Deleted {result.rowcount} existing rows for date {report_date}")
 
-                #delete today's entries
-                drop_entries = (
-                    delete(table).where(table.c.Date == report_date)
-                )
-                deleted = conn.execute(drop_entries)
-                logger.info(f"Deleted {deleted.rowcount} rows where Date = {current_date}.")
-
-                #update the table with the most recent data
+                # Insert new data
                 df.to_sql(
                     name=table_name,
                     con=conn,
                     schema=db_schema,
-                    if_exists="append",
-                    index=False,
+                    if_exists='append',
+                    index=False
                 )
-                logger.info(f"Inserted {len(df)} rows into table '{table_name}'.")
-
+                logger.info(f"Successfully inserted {len(df)} rows to {db_schema}.{table_name}")
 
             return True
 
         except Exception as e:
-            logger.error(f"Error writing to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
+            logger.error(f"Error writing to PostgreSQL: {e}")
+            raise
 
     @task
-    def update_00_table_reg(complete, logger, db_url, table_name, db_schema):
-        updates.update_00_table_reg(complete, logger, db_url, table_name, db_schema)
+    def update_table_register(complete: bool, db_url: str) -> None:
+        """
+        Update table register with metadata.
 
-    url = postgres_connection()
-    file_name = ieso_data_pull()
-    df = transform_data(file_name)
-    status = update_00_ref(df, url, local_filename=file_name)
-    update_00_table_reg(status, logger, url, table, schema)
+        Args:
+            complete: Whether previous task completed successfully
+            db_url: Database connection string
+        """
+        if complete:
+            updates.update_00_table_reg(
+                complete=complete,
+                logger=logger,
+                db_url=db_url,
+                table_name=table_name,
+                db_schema=schema_name
+            )
 
-ouput_capability_report_pipeline()
+    # Define task dependencies
+    db_url = postgres_connection()
+    filename = ieso_data_pull()
+    df = transform_data(filename)
+    status = write_to_database(df, db_url, filename)
+    update_table_register(status, db_url)
+
+
+# Instantiate the DAG
+output_capability_report_pipeline()

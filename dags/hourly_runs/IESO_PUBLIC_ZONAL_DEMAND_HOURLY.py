@@ -1,175 +1,214 @@
-# Import the necessary libraries from Airflow
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+"""
+IESO Public Zonal Demand Hourly Pipeline
+
+This DAG downloads hourly Ontario electricity demand data by geographic zone
+from IESO's public API, processes it, and loads it into PostgreSQL.
+
+Schedule: @hourly
+Target Table: 00_RAW.00_IESO_ZONAL_DEMAND
+"""
+
 from airflow.sdk import dag, task
-from airflow.models import Variable
 from datetime import datetime
 import requests
 import os
 import pandas as pd
-from pandas.core.interchange.dataframe_protocol import DataFrame
-from sqlalchemy import create_engine, create_engine, MetaData, Table, update, select, func, delete
+from sqlalchemy import MetaData, Table, delete
 import logging
+
+# Import shared utilities
+from dags.utils.database import get_database_url, get_engine
 from dags.utils import updates
+from config.config_loader import get_ieso_url, get_table_name, get_schema_name, get_config
+
+logger = logging.getLogger(__name__)
 
 
-@dag (
-    dag_id = 'hourly_ieso_zonal_demand_pipeline',
-    schedule = "@hourly",
-    start_date = datetime(2020, 1, 1),
-    catchup = False,
-    tags = ['demand', 'data-pipeline', 'ieso', 'postgres', 'zonal']
+@dag(
+    dag_id='hourly_ieso_zonal_demand_pipeline',
+    schedule="@hourly",
+    start_date=datetime(2020, 1, 1),
+    catchup=False,
+    tags=['demand', 'data-pipeline', 'ieso', 'postgres', 'zonal', 'refactored']
 )
 def ieso_zonal_demand_data_pipeline():
-    # Set up global variables
-    logger = logging.getLogger("airflow.task")
-    table = '00_IESO_ZONAL_DEMAND'
-    schema = '00_RAW'
-    base_url = 'https://reports-public.ieso.ca/public/DemandZonal/'
+    """
+    IESO Zonal Demand Data Pipeline
+
+    Pipeline Steps:
+    1. Get database connection string
+    2. Download zonal demand CSV from IESO API
+    3. Transform and filter data to latest date
+    4. Write to PostgreSQL (delete/replace pattern)
+    5. Update table register with metadata
+    """
+
+    # Load configuration
+    table_name = get_table_name('zonal_demand')
+    schema_name = get_schema_name('raw')
+    endpoint_url = get_ieso_url('zonal_demand')
     filename = 'PUB_DemandZonal.csv'
+    timeout = get_config('ieso.download_timeout', default=30)
+    chunk_size = get_config('ieso.chunk_size', default=8192)
+    timezone = get_config('timezone', default='America/Toronto')
 
     @task
     def postgres_connection() -> str:
-        # Access database credentials from Airflow Variables
-        try:
-            DB_USER = Variable.get('DB_USER')
-            DB_PASSWORD = Variable.get('DB_PASSWORD')
-            DB_HOST = Variable.get('HOST')
-            DB_PORT = Variable.get('DB_PORT', default_var='5432')
-            DB_NAME = Variable.get('DB')
+        """
+        Get PostgreSQL connection string from Airflow Variables.
 
-            logger.info("Database credentials loaded from Airflow Variables.")
-
-        except Exception as e:
-            logger.error(f"Error accessing Airflow Variables: {e}. Cannot proceed with DB write.")
-            # Raise an exception to fail the task if variables are not set
-            raise Exception("Airflow Variables not configured.")
-
-        # Construct the database connection string
-        DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        logger.info("Database URL created successfully.")
-
-        return DATABASE_URL
-
-
+        Returns:
+            str: Database connection URL
+        """
+        return get_database_url()
 
     @task
     def ieso_zonal_demand_data_pull() -> str:
-        url = f"{base_url}{filename}"
-        local_filename = filename
+        """
+        Download IESO zonal demand CSV file.
 
+        Downloads the latest zonal demand data from IESO's public API
+        and saves it to the local filesystem.
 
-        # --- 1. Download the file ---
+        Returns:
+            str: Path to downloaded file
+
+        Raises:
+            requests.exceptions.RequestException: If download fails
+        """
         try:
-            logger.info(f"Attempting to download {url}...")
-            response = requests.get(url, stream=True)
+            logger.info(f"Downloading {endpoint_url}...")
+            response = requests.get(endpoint_url, stream=True, timeout=timeout)
             response.raise_for_status()
 
-            with open(local_filename, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+            with open(filename, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
                     if chunk:
                         f.write(chunk)
 
-            logger.info(f"Successfully downloaded {local_filename}")
-            return local_filename
+            logger.info(f"Successfully downloaded {filename}")
+            return filename
 
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout downloading {endpoint_url}: {e}")
+            raise
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error {e.response.status_code} downloading {endpoint_url}: {e}")
+            raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading the file: {e}")
-            raise e  # Re-raise the exception to fail the task
-
+            logger.error(f"Error downloading {endpoint_url}: {e}")
+            raise
 
     @task
-    def transform_data(local_filename) -> DataFrame:
-        # --- 2. Process the downloaded CSV into a pandas DataFrame ---
+    def transform_data(local_filename: str) -> pd.DataFrame:
+        """
+        Parse and transform IESO zonal demand CSV data.
+
+        Reads the CSV file with zone columns, converts data types,
+        adds modification timestamp, and filters to only the most
+        recent date's records.
+
+        Args:
+            local_filename: Path to downloaded CSV file
+
+        Returns:
+            DataFrame with columns: Date, Hour, Ontario_Demand, zone columns,
+            Zone_Total, Diff, Modified_DT. Filtered to latest date.
+
+        Raises:
+            FileNotFoundError: If CSV file doesn't exist
+            pd.errors.ParserError: If CSV parsing fails
+        """
+        if not os.path.exists(local_filename):
+            logger.error(f"File {local_filename} not found")
+            raise FileNotFoundError(f"File {local_filename} was not found after download.")
+
         try:
-            if os.path.exists(local_filename):
-                col_names = [
-                    'Date',
-                    'Hour',
-                    'Ontario_Demand',
-                    'Northwest',
-                    'Northeast',
-                    'Ottawa',
-                    'East',
-                    'Toronto',
-                    'Essa',
-                    'Bruce',
-                    'Southwest',
-                    'Niagara',
-                    'West',
-                    'Zone_Total',
-                    'Diff'
-                ]
+            col_names = [
+                'Date', 'Hour', 'Ontario_Demand',
+                'Northwest', 'Northeast', 'Ottawa', 'East',
+                'Toronto', 'Essa', 'Bruce', 'Southwest',
+                'Niagara', 'West', 'Zone_Total', 'Diff'
+            ]
 
-                df = pd.read_csv(local_filename, header=None, names=col_names)
+            df = pd.read_csv(local_filename, header=None, names=col_names)
 
-                # Data cleaning and type conversion
-                df['Date'] = pd.to_datetime(df['Date'], errors='coerce', format='%Y-%m-%d')
-                df.dropna(subset=['Date'], inplace=True)
-                df['Modified_DT'] = pd.Timestamp.now().floor('S')
-                # set dtype of other columns
-                df['Hour'] = pd.to_numeric(df['Hour'], errors='coerce')
-                df['Ontario_Demand'] = pd.to_numeric(df['Ontario_Demand'], errors='coerce')
-                df['Northwest'] = pd.to_numeric(df['Northwest'], errors='coerce')
-                df['Northeast'] = pd.to_numeric(df['Northeast'], errors='coerce')
-                df['Ottawa'] = pd.to_numeric(df['Ottawa'], errors='coerce')
-                df['East'] = pd.to_numeric(df['East'], errors='coerce')
-                df['Toronto'] = pd.to_numeric(df['Toronto'], errors='coerce')
-                df['Essa'] = pd.to_numeric(df['Essa'], errors='coerce')
-                df['Bruce'] = pd.to_numeric(df['Bruce'], errors='coerce')
-                df['Southwest'] = pd.to_numeric(df['Southwest'], errors='coerce')
-                df['Niagara'] = pd.to_numeric(df['Niagara'], errors='coerce')
-                df['West'] = pd.to_numeric(df['West'], errors='coerce')
-                df['Zone_Total'] = pd.to_numeric(df['Zone_Total'], errors='coerce')
-                df['Diff'] = pd.to_numeric(df['Diff'], errors='coerce')
+            # Data cleaning and type conversion
+            date_format = get_config('data_processing.date_format', default='%Y-%m-%d')
+            df['Date'] = pd.to_datetime(df['Date'], errors='coerce', format=date_format)
+            df.dropna(subset=['Date'], inplace=True)
 
-                logger.info("\nFirst 5 rows of the processed data:")
-                logger.info(df.head())
+            df['Modified_DT'] = pd.Timestamp.now(tz=timezone).floor('S')
 
-                filtered_data = df[df['Date'] == df['Date'].max()]
+            # Convert all numeric columns
+            numeric_cols = [
+                'Hour', 'Ontario_Demand', 'Northwest', 'Northeast', 'Ottawa', 'East',
+                'Toronto', 'Essa', 'Bruce', 'Southwest', 'Niagara', 'West',
+                'Zone_Total', 'Diff'
+            ]
+            for col in numeric_cols:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
 
-                return filtered_data
+            logger.info(f"Processed {len(df)} total rows")
+            logger.info(f"First 5 rows:\n{df.head()}")
 
-            else:
-                logger.error(f"File {local_filename} was not found, cannot read.")
-                raise FileNotFoundError(f"File {local_filename} was not found after download.")
+            # Filter to latest date only
+            max_date = df['Date'].max()
+            filtered_df = df[df['Date'] == max_date]
 
+            logger.info(f"Filtered to {len(filtered_df)} rows for date {max_date}")
+
+            return filtered_df
+
+        except pd.errors.ParserError as e:
+            logger.error(f"CSV parsing error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error reading and processing the CSV file: {e}")
-            raise e  # Re-raise the exception to fail the task
-
+            logger.error(f"Error processing CSV file: {e}")
+            raise
 
     @task
-    def update_00_ref(df:DataFrame, db_url,  table_name = table, db_schema = schema) -> bool:
+    def write_to_database(
+        df: pd.DataFrame,
+        db_url: str,
+        table_name: str = table_name,
+        db_schema: str = schema_name
+    ) -> bool:
+        """
+        Write zonal demand data to PostgreSQL.
 
+        Deletes existing records for the latest date, then inserts new records.
+
+        Args:
+            df: DataFrame to write
+            db_url: Database connection string
+            table_name: Target table name
+            db_schema: Target schema name
+
+        Returns:
+            bool: True if write successful
+
+        Raises:
+            SQLAlchemyError: If database operation fails
+        """
         try:
-            logger.info("Attempting to connect to the PostgreSQL database...")
-            engine = create_engine(db_url)
+            logger.info("Connecting to PostgreSQL database...")
+            engine = get_engine(db_url)
             logger.info("Database connection established.")
 
-        except Exception as e:
-            logger.error(f"Error establishing connection to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
-
-        try:
-
+            # Reflect table structure
             metadata = MetaData(schema=db_schema)
-            # Reflect the table structure from the database
-            db_table = Table(table_name, metadata, autoload_with=engine)
+            table = Table(table_name, metadata, autoload_with=engine)
 
             max_date = df['Date'].max()
 
             with engine.connect() as conn:
-                logger.info(f"Connection to database successful. Writing data to table '{table_name}'...")
+                # Delete existing entries for this date
+                delete_stmt = delete(table).where(table.c.Date == max_date)
+                result = conn.execute(delete_stmt)
+                logger.info(f"Deleted {result.rowcount} existing rows for date {max_date}")
 
-                # delete today's entries
-                drop_entries = (
-                    delete(db_table).where(db_table.c.Date == max_date)
-                )
-                deleted = conn.execute(drop_entries)
-                logger.info(f"Deleted {deleted.rowcount} rows where Date = {max_date}.")
-
-                # The .to_sql method will create the table if it doesn't exist
+                # Insert new data
                 df.to_sql(
                     name=table_name,
                     con=conn,
@@ -177,25 +216,39 @@ def ieso_zonal_demand_data_pipeline():
                     if_exists='append',
                     index=False
                 )
-                logger.info(f"Successfully inserted data to table '{table_name}' in schema '{db_schema}'.")
-                return True
+                logger.info(f"Successfully inserted {len(df)} rows to {db_schema}.{table_name}")
+
+            return True
 
         except Exception as e:
-            logger.error(f"Error writing to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
-
+            logger.error(f"Error writing to PostgreSQL: {e}")
+            raise
 
     @task
-    def update_00_table_reg(complete, logger, db_url, table_name, db_schema):
-        updates.update_00_table_reg(complete, logger, db_url, table_name, db_schema)
+    def update_table_register(complete: bool, db_url: str) -> None:
+        """
+        Update table register with metadata.
+
+        Args:
+            complete: Whether previous task completed successfully
+            db_url: Database connection string
+        """
+        if complete:
+            updates.update_00_table_reg(
+                complete=complete,
+                logger=logger,
+                db_url=db_url,
+                table_name=table_name,
+                db_schema=schema_name
+            )
+
+    # Define task dependencies
+    db_url = postgres_connection()
+    filename = ieso_zonal_demand_data_pull()
+    df = transform_data(filename)
+    status = write_to_database(df, db_url)
+    update_table_register(status, db_url)
 
 
-
-    url = postgres_connection()
-    file_name = ieso_zonal_demand_data_pull()
-    df = transform_data(file_name)
-    status = update_00_ref(df, url)
-    update_00_table_reg(status, logger, url, table, schema)
-
-
+# Instantiate the DAG
 ieso_zonal_demand_data_pipeline()
