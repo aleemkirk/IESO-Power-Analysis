@@ -7,7 +7,8 @@ eliminating code duplication across DAG files.
 
 import logging
 from typing import Optional
-from sqlalchemy import create_engine, engine
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from airflow.models import Variable
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ def get_database_url() -> str:
         ) from e
 
 
-def get_engine(db_url: Optional[str] = None, **kwargs) -> engine:
+def get_engine(db_url: Optional[str] = None, **kwargs) -> Engine:
     """
     Create SQLAlchemy engine with connection pooling.
 
