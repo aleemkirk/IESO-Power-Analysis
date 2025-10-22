@@ -5,6 +5,8 @@ This module provides shared functions for database connectivity and operations,
 eliminating code duplication across DAG files.
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Optional
 from sqlalchemy import create_engine
