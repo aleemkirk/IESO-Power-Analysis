@@ -222,8 +222,8 @@ def ieso_zonal_demand_01_data_pipeline():
                 complete=complete,
                 logger=logger,
                 db_url=db_url,
-                table_name=target_table,
-                db_schema=target_schema
+                table_name=_target_table,
+                db_schema=_target_schema
             )
 
     # Define task dependencies

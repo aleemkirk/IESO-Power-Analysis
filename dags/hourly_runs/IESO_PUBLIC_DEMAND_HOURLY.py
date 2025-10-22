@@ -226,8 +226,8 @@ def ieso_demand_data_pipeline():
                 complete=complete,
                 logger=logger,
                 db_url=db_url,
-                table_name=table_name,
-                db_schema=schema_name
+                table_name=_table_name,
+                db_schema=_schema_name
             )
 
     # Define task dependencies
