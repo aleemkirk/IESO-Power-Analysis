@@ -8,10 +8,12 @@ eliminating code duplication across DAG files.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from sqlalchemy import create_engine
-from sqlalchemy.engine import Engine
 from airflow.models import Variable
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
