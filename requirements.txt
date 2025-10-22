@@ -1,0 +1,29 @@
+# IESO Power Analysis - Python Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core Data Processing
+pandas>=1.5.3
+numpy>=1.24.3
+sqlalchemy>=2.0.0
+
+# HTTP Requests
+requests>=2.32.0
+
+# XML Parsing
+lxml>=4.9.0
+
+# Configuration Management
+pyyaml>=6.0
+
+# Apache Airflow (if running locally)
+# apache-airflow>=3.0.4
+
+# Testing (development)
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.11.0
+
+# Code Quality (development)
+black>=23.7.0
+flake8>=6.1.0
+mypy>=1.5.0
