@@ -45,12 +45,12 @@ def output_generation_by_fuel_type_pipeline():
     6. Update table register with metadata
     """
 
-    # Load configuration
-    table_name = get_table_name('fuel_output')
-    schema_name = get_schema_name('raw')
-    endpoint_url = get_ieso_url('fuel_output')
-    filename = 'PUB_GenOutputbyFuelHourly.xml'
-    timeout = get_config('ieso.download_timeout', default=30)
+    # Load configuration - capture at DAG definition time
+    _table_name = get_table_name('fuel_output')
+    _schema_name = get_schema_name('raw')
+    _endpoint_url = get_ieso_url('fuel_output')
+    _filename = 'PUB_GenOutputbyFuelHourly.xml'
+    _timeout = get_config('ieso.download_timeout', default=30)
 
     @task
     def postgres_connection() -> str:
@@ -77,24 +77,24 @@ def output_generation_by_fuel_type_pipeline():
             requests.exceptions.RequestException: If download fails
         """
         try:
-            logger.info(f"Downloading {endpoint_url}...")
-            response = requests.get(endpoint_url, timeout=timeout)
+            logger.info(f"Downloading {_endpoint_url}...")
+            response = requests.get(_endpoint_url, timeout=_timeout)
             response.raise_for_status()
 
-            with open(filename, "wb") as f:
+            with open(_filename, "wb") as f:
                 f.write(response.content)
 
-            logger.info(f"Successfully downloaded {filename}")
-            return filename
+            logger.info(f"Successfully downloaded {_filename}")
+            return _filename
 
         except requests.exceptions.Timeout as e:
-            logger.error(f"Timeout downloading {endpoint_url}: {e}")
+            logger.error(f"Timeout downloading {_endpoint_url}: {e}")
             raise
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error {e.response.status_code} downloading {endpoint_url}: {e}")
+            logger.error(f"HTTP error {e.response.status_code} downloading {_endpoint_url}: {e}")
             raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading {endpoint_url}: {e}")
+            logger.error(f"Error downloading {_endpoint_url}: {e}")
             raise
 
     @task
@@ -198,8 +198,8 @@ def output_generation_by_fuel_type_pipeline():
     def write_to_database(
         df: pd.DataFrame,
         db_url: str,
-        table_name: str = table_name,
-        db_schema: str = schema_name
+        table_name: str = _table_name,
+        db_schema: str = _schema_name
     ) -> bool:
         """
         Write generator output data to PostgreSQL.

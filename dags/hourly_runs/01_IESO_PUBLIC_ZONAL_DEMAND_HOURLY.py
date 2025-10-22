@@ -43,11 +43,11 @@ def ieso_zonal_demand_01_data_pipeline():
     5. Update table register with metadata
     """
 
-    # Load configuration
-    source_table = get_table_name('zonal_demand')
-    source_schema = get_schema_name('raw')
-    target_table = get_table_name('zonal_demand_normalized')
-    target_schema = get_schema_name('primary')
+    # Load configuration - capture at DAG definition time
+    _source_table = get_table_name('zonal_demand')
+    _source_schema = get_schema_name('raw')
+    _target_table = get_table_name('zonal_demand_normalized')
+    _target_schema = get_schema_name('primary')
 
     # External task sensor - wait for upstream DAG
     wait_for_00_zonal = ExternalTaskSensor(
@@ -72,8 +72,8 @@ def ieso_zonal_demand_01_data_pipeline():
     @task
     def read_from_raw_schema(
         db_url: str,
-        db_schema: str = source_schema,
-        table_name: str = source_table
+        db_schema: str = _source_schema,
+        table_name: str = _source_table
     ) -> pd.DataFrame:
         """
         Read zonal demand data from 00_RAW schema.
@@ -165,8 +165,8 @@ def ieso_zonal_demand_01_data_pipeline():
     def write_to_primary_schema(
         df: pd.DataFrame,
         db_url: str,
-        db_schema: str = target_schema,
-        table_name: str = target_table
+        db_schema: str = _target_schema,
+        table_name: str = _target_table
     ) -> bool:
         """
         Write normalized zonal demand data to 01_PRI schema.
