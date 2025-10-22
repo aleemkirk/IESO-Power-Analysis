@@ -1,95 +1,143 @@
-# Import the necessary libraries from Airflow
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.models import Variable
+"""
+IESO Generator Output by Fuel Type One-Time Historical Load
+
+This DAG downloads ALL historical generator output data by fuel type from
+IESO's public API (XML format) and performs initial bulk load into PostgreSQL.
+
+Schedule: @once (one-time execution)
+Target Table: 00_RAW.00_GEN_OUTPUT_BY_FUEL_TYPE_HOURLY
+Data Format: XML
+Purpose: Initial historical data load
+"""
+
 from airflow.sdk import dag, task
-from datetime import datetime, timedelta
+from datetime import datetime
 import requests
 import pandas as pd
-from sqlalchemy import create_engine
 import logging
 from lxml import etree
-from pandas.core.interchange.dataframe_protocol import DataFrame
 
-@dag (
-    dag_id = 'create_ieso_output_by_fuel_hourly_one_time',
-    schedule = "@once",
-    start_date = datetime(2020, 1, 1),
-    catchup = False,
-    tags = ['output', 'fuel-type', 'data-pipeline', 'ieso', 'postgres']
+# Import shared utilities
+from dags.utils.database import get_database_url, get_engine
+from config.config_loader import get_ieso_url, get_table_name, get_schema_name, get_config
+
+logger = logging.getLogger(__name__)
+
+
+@dag(
+    dag_id='create_ieso_output_by_fuel_hourly_one_time',
+    schedule=None,  # One-time run, manual trigger only
+    start_date=datetime(2020, 1, 1),
+    catchup=False,
+    tags=['output', 'fuel-type', 'data-pipeline', 'ieso', 'postgres', 'xml', 'one-time', 'historical', 'refactored']
 )
 def output_generation_by_fuel_type_pipeline():
-    # Set up a logger for this specific task
-    logger = logging.getLogger("airflow.task")
+    """
+    IESO Generator Output by Fuel Type One-Time Historical Load Pipeline
+
+    Pipeline Steps:
+    1. Get database connection string
+    2. Download XML file from IESO API
+    3. Parse XML and extract ALL fuel type output data
+    4. Transform to DataFrame format (all historical data)
+    5. Write to PostgreSQL (replace entire table)
+    6. Note: Does NOT update table register (one-time load)
+    """
+
+    # Load configuration
+    table_name = get_table_name('fuel_output')
+    schema_name = get_schema_name('raw')
+    endpoint_url = get_ieso_url('fuel_output')
+    filename = 'PUB_GenOutputbyFuelHourly.xml'
+    timeout = get_config('ieso.download_timeout', default=30)
 
     @task
     def postgres_connection() -> str:
-        # Access database credentials from Airflow Variables
-        try:
-            DB_USER = Variable.get('DB_USER')
-            DB_PASSWORD = Variable.get('DB_PASSWORD')
-            DB_HOST = Variable.get('HOST')
-            DB_PORT = Variable.get('DB_PORT', default_var='5432')
-            DB_NAME = Variable.get('DB')
+        """
+        Get PostgreSQL connection string from Airflow Variables.
 
-            logger.info("Database credentials loaded from Airflow Variables.")
-
-        except Exception as e:
-            logger.error(f"Error accessing Airflow Variables: {e}. Cannot proceed with DB write.")
-            # Raise an exception to fail the task if variables are not set
-            raise Exception("Airflow Variables not configured.")
-
-        # Construct the database connection string
-        DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        logger.info("Database URL created successfully.")
-
-        return DATABASE_URL
-
-
+        Returns:
+            str: Database connection URL
+        """
+        return get_database_url()
 
     @task
     def ieso_data_pull() -> str:
+        """
+        Download FULL historical IESO generator output XML file.
 
-        # Define file and table names
-        base_url = 'https://reports-public.ieso.ca/public/GenOutputbyFuelHourly/'
-        filename = 'PUB_GenOutputbyFuelHourly.xml'
-        url = f"{base_url}{filename}"
-        local_filename = filename
+        Downloads ALL available historical generator output by fuel type data.
 
-        # --- 1. Download the file ---
+        Returns:
+            str: Path to downloaded file
+
+        Raises:
+            requests.exceptions.RequestException: If download fails
+        """
         try:
-            response = requests.get(url)
+            logger.info(f"Downloading FULL historical XML data from {endpoint_url}...")
+            response = requests.get(endpoint_url, timeout=timeout)
             response.raise_for_status()
 
-            with open(local_filename, "wb") as f:
+            with open(filename, "wb") as f:
                 f.write(response.content)
 
+            logger.info(f"Successfully downloaded {filename}")
             return filename
 
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Timeout downloading {endpoint_url}: {e}")
+            raise
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP error {e.response.status_code} downloading {endpoint_url}: {e}")
+            raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading the file: {e}")
-            raise e  # Re-raise the exception to fail the task
+            logger.error(f"Error downloading {endpoint_url}: {e}")
+            raise
 
     @task
-    def transform_data(local_filename) -> DataFrame:
+    def transform_data(local_filename: str) -> pd.DataFrame:
+        """
+        Parse XML and transform ALL generator output data.
+
+        Parses the IESO XML file with nested structure and extracts
+        ALL historical records (no date filtering).
+
+        Args:
+            local_filename: Path to downloaded XML file
+
+        Returns:
+            DataFrame with columns: Date, hour, fuel_type, output
+            Contains ALL historical records.
+
+        Raises:
+            etree.XMLSyntaxError: If XML parsing fails
+            KeyError: If expected XML elements are missing
+        """
         try:
             # Parse XML
+            logger.info(f"Parsing XML file: {local_filename}")
             tree = etree.parse(local_filename)
             root = tree.getroot()
 
-            # Extract namespace (if any)
+            # Extract namespace
             nsmap = root.nsmap
-            # Some XML files use a default namespace (None key in nsmap), remap it to "ns"
             if None in nsmap:
                 nsmap["ns"] = nsmap.pop(None)
+            else:
+                default_ns = get_config('xml.namespaces.default')
+                nsmap["ns"] = default_ns
 
-            logger.info(f"Successfully downloaded {local_filename}")
+            logger.info(f"XML namespace: {nsmap.get('ns', 'No namespace')}")
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading the file: {e}")
-            raise e  # Re-raise the exception to fail the task
+        except etree.XMLSyntaxError as e:
+            logger.error(f"XML parsing error: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Error opening XML file: {e}")
+            raise
 
-        # --- 2. Process the downloaded XML into a pandas DataFrame ---
+        # Parse XML structure
         try:
             records = []
 
@@ -108,58 +156,90 @@ def output_generation_by_fuel_type_pipeline():
 
                         records.append({
                             "Date": pd.to_datetime(date),
-                            "hour": int(hour),
+                            "hour": int(hour) if hour else None,
                             "fuel_type": fuel_type,
-                            "output": output if output == None else int(output)
+                            "output": int(output) if output is not None else None
                         })
 
             # Create DataFrame
             df = pd.DataFrame(records)
 
-            logger.info("\nFirst 5 rows of the processed data:")
-            logger.info(df.head())
+            if len(df) == 0:
+                raise ValueError("No data extracted from XML file")
+
+            logger.info(f"Extracted {len(df)} records from XML (ALL HISTORICAL DATA)")
+            logger.info(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
+            logger.info(f"Fuel types: {df['fuel_type'].unique().tolist()}")
+            logger.info(f"First 5 rows:\n{df.head()}")
+            logger.info(f"Last 5 rows:\n{df.tail()}")
+
+            # NO FILTERING - return all data for one-time load
             return df
 
+        except etree.XPathEvalError as e:
+            logger.error(f"XPath evaluation error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error reading and processing the XML file: {e}")
-            raise e  # Re-raise the exception to fail the task
-
+            logger.error(f"Error processing XML data: {e}")
+            raise
 
     @task
-    def create_00_ref(df:DataFrame, db_url,  table_name = '00_GEN_OUTPUT_BY_FUEL_TYPE_HOURLY', db_schema = '00_RAW'):
+    def write_to_database(
+        df: pd.DataFrame,
+        db_url: str,
+        table_name: str = table_name,
+        db_schema: str = schema_name
+    ) -> bool:
+        """
+        Write ALL historical generator output data to PostgreSQL.
 
+        Replaces entire table with historical data (if_exists='replace').
+        This is a one-time bulk load operation.
+
+        Args:
+            df: DataFrame with all historical data to write
+            db_url: Database connection string
+            table_name: Target table name
+            db_schema: Target schema name
+
+        Returns:
+            bool: True if write successful
+
+        Raises:
+            SQLAlchemyError: If database operation fails
+        """
         try:
-            logger.info("Attempting to connect to the PostgreSQL database...")
-            engine = create_engine(db_url)
+            logger.info("Connecting to PostgreSQL database...")
+            engine = get_engine(db_url)
             logger.info("Database connection established.")
 
-        except Exception as e:
-            logger.error(f"Error establishing connection to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
-
-        try:
             with engine.connect() as conn:
-                logger.info(f"Connection to database successful. Writing data to table '{table_name}'...")
+                # Replace entire table with historical data
+                logger.info(f"Writing ALL historical data to {db_schema}.{table_name}...")
+                logger.info("This will REPLACE any existing data in the table.")
 
-                # The .to_sql method will create the table if it doesn't exist
                 df.to_sql(
                     name=table_name,
                     con=conn,
                     schema=db_schema,
-                    if_exists='replace',
+                    if_exists='replace',  # Replace entire table
                     index=False
                 )
-                logger.info(f"Successfully wrote data to table '{table_name}' in schema '{db_schema}'.")
+                logger.info(f"Successfully wrote {len(df)} rows to {db_schema}.{table_name}")
+                logger.info(f"Date range: {df['Date'].min()} to {df['Date'].max()}")
+
+            return True
 
         except Exception as e:
-            logger.error(f"Error writing to PostgreSQL database: {e}")
-            raise e  # Re-raise the exception to fail the task
+            logger.error(f"Error writing to PostgreSQL: {e}")
+            raise
+
+    # Define task dependencies
+    db_url = postgres_connection()
+    filename = ieso_data_pull()
+    df = transform_data(filename)
+    status = write_to_database(df, db_url)
 
 
-    url = postgres_connection()
-    file_name = ieso_data_pull()
-    df = transform_data(file_name)
-    create_00_ref(df, url)
-
-
+# Instantiate the DAG
 output_generation_by_fuel_type_pipeline()
