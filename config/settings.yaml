@@ -1,0 +1,52 @@
+# IESO Power Analysis Configuration
+# This file centralizes all configuration values for the data pipeline
+
+# IESO API Configuration
+ieso:
+  base_url: "https://reports-public.ieso.ca/public/"
+  endpoints:
+    demand: "Demand/PUB_Demand.csv"
+    zonal_demand: "DemandZonal/PUB_DemandZonal.csv"
+    fuel_output: "GenOutputbyFuelHourly/PUB_GenOutputbyFuelHourly.xml"
+    capability: "GenOutputCapability/PUB_GenOutputCapability.xml"
+  download_timeout: 30  # seconds
+  chunk_size: 8192  # bytes for streaming downloads
+
+# Database Configuration
+database:
+  schemas:
+    raw: "00_RAW"
+    primary: "01_PRI"
+    reference: "00_REF"
+  tables:
+    demand: "00_IESO_DEMAND"
+    zonal_demand: "00_IESO_ZONAL_DEMAND"
+    zonal_demand_normalized: "01_IESO_ZONAL_DEMAND"
+    fuel_output: "00_IESO_GENERATOR_OUTPUT_BY_FUEL_TYPE"
+    capability: "00_IESO_GEN_OUTPUT_CAPABILITY"
+    table_register: "00_TABLE_REGISTER"
+
+# Timezone Configuration
+timezone: "America/Toronto"
+
+# Data Processing Configuration
+data_processing:
+  date_format: "%Y-%m-%d"
+  filter_to_latest_date: true  # Only process most recent date's data
+
+# ARIMA Model Configuration
+forecasting:
+  arima:
+    order: [5, 1, 0]  # (p, d, q) parameters
+    train_test_split: 0.8
+    forecast_horizon: 720  # hours (30 days)
+
+# XML Parsing Configuration
+xml:
+  namespaces:
+    default: "http://www.theIMO.com/schema"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
